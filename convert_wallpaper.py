@@ -337,8 +337,11 @@ def main() -> None:
     if ext not in (".mp4", ".mov", ".m4v"):
         print(f"[WARN]  文件扩展名为 {ext}，非 MP4 格式，尝试继续处理…")
 
-    # 输出目录 = 脚本所在目录
-    script_dir = Path(__file__).resolve().parent
+    # 输出目录 = exe/脚本所在目录
+    if getattr(sys, "frozen", False):
+        script_dir = Path(sys.executable).resolve().parent
+    else:
+        script_dir = Path(__file__).resolve().parent
     process_all(input_path, script_dir)
 
 
