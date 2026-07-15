@@ -38,25 +38,26 @@ def _get_ffmpeg_paths() -> tuple[str, str]:
       2. 脚本同目录下的 ffmpeg/ffprobe
       3. 系统 PATH
     """
+    is_win = sys.platform.startswith("win")
+    ffmpeg_exe = "ffmpeg.exe" if is_win else "ffmpeg"
+    ffprobe_exe = "ffprobe.exe" if is_win else "ffprobe"
     candidates = []
 
     # 1) PyInstaller bundle
     if getattr(sys, "frozen", False):
         base = Path(sys._MEIPASS)
-        candidates.append((base / "ffmpeg", base / "ffprobe"))
+        candidates.append((base / ffmpeg_exe, base / ffprobe_exe))
 
     # 2) 脚本同目录
     script_dir = Path(__file__).resolve().parent
-    candidates.append((script_dir / "ffmpeg", script_dir / "ffprobe"))
-    # 也检查带 .exe 后缀（Windows 调试用）
-    candidates.append((script_dir / "ffmpeg.exe", script_dir / "ffprobe.exe"))
+    candidates.append((script_dir / ffmpeg_exe, script_dir / ffprobe_exe))
 
     for ffmpeg, ffprobe in candidates:
         if ffmpeg.exists() and ffprobe.exists():
             return (str(ffmpeg), str(ffprobe))
 
     # 3) 系统 PATH
-    return ("ffmpeg", "ffprobe")
+    return (ffmpeg_exe, ffprobe_exe)
 
 
 FFMPEG_PATH, FFPROBE_PATH = _get_ffmpeg_paths()
