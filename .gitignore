@@ -1,0 +1,31 @@
+# Python build artifacts
+build/
+dist/
+*.spec
+__pycache__/
+*.pyc
+
+# macOS
+.DS_Store
+
+# Windows
+Thumbs.db
+
+# ffmpeg local binaries
+ffmpeg
+ffprobe
+ffmpeg.exe
+ffprobe.exe
+
+# Test output
+OPPO/
+vivo/
+荣耀/
+
+# IDE
+.idea/
+.vscode/
+
+# Test data / source material
+实验组/
+素材（不可动）/
