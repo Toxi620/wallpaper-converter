@@ -60,6 +60,6 @@ All files are created relative to the script's parent directory:
 ```
 script_dir/
 ├── OPPO/{stem}.mp4, {stem}.gif
-├── vivo/{stem}.mp4
+├── vivo/{stem}.mp4, {stem}.gif
 └── 荣耀/{stem}.mp4
 ```

@@ -76,7 +76,10 @@ PLATFORMS = {
     },
     "VIVO": {
         "dir_name": "vivo",
-        "generate_gif": False,
+        "generate_gif": True,
+        "gif_width": 216,
+        "gif_height": 384,
+        "gif_fps": 15,
         # 保持原尺寸（仅偶数修正），无码率限制
     },
     "荣耀": {
@@ -197,16 +200,23 @@ def make_gif(
     output_path: str,
     max_width: int = 400,
     fps: int = 15,
+    height: int | None = None,
 ) -> None:
     """
     两阶段 palette 法生成高质量 GIF。
     - 帧率降至 ~15 fps
-    - 宽度限制 max_width，高度等比缩放
+    - 默认宽度限制 max_width，高度等比缩放
+    - 若指定 height，则强制输出 exact 尺寸 (max_width x height)
     - lanczos 下采样 + 256 色调色板
     """
+    if height is not None:
+        scale_expr = f"{max_width}:{height}"
+    else:
+        scale_expr = f"'min({max_width},iw)':-1"
+
     filter_complex = (
         f"fps={fps},"
-        f"scale='min({max_width},iw)':-1:flags=lanczos,"
+        f"scale={scale_expr}:flags=lanczos,"
         "split[s0][s1];"
         "[s0]palettegen=max_colors=256[p];"
         "[s1][p]paletteuse=dither=bayer:bayer_scale=3"
@@ -242,12 +252,16 @@ def process_oppo(
 
 
 def process_vivo(input_path: str, info: dict, output_dir: Path, stem: str) -> None:
-    """VIVO：原尺寸重编码（高质量，无码率限制）。"""
+    """VIVO：原尺寸重编码（高质量，无码率限制）+ 216x384 GIF。"""
     w = ensure_even(info["width"])
     h = ensure_even(info["height"])
 
     mp4_out = output_dir / f"{stem}.mp4"
     encode_mp4(input_path, str(mp4_out), w, h, crf=18)
+
+    # 216x384 GIF
+    gif_out = output_dir / f"{stem}.gif"
+    make_gif(input_path, str(gif_out), max_width=216, fps=15, height=384)
 
 
 def process_honor(input_path: str, info: dict, output_dir: Path, stem: str) -> None:
@@ -337,12 +351,9 @@ def main() -> None:
     if ext not in (".mp4", ".mov", ".m4v"):
         print(f"[WARN]  文件扩展名为 {ext}，非 MP4 格式，尝试继续处理…")
 
-    # 输出目录 = exe/脚本所在目录
-    if getattr(sys, "frozen", False):
-        script_dir = Path(sys.executable).resolve().parent
-    else:
-        script_dir = Path(__file__).resolve().parent
-    process_all(input_path, script_dir)
+    # 输出目录 = 输入视频所在目录
+    input_dir = Path(input_path).resolve().parent
+    process_all(input_path, input_dir)
 
 
 if __name__ == "__main__":

@@ -5,6 +5,9 @@ dist/
 __pycache__/
 *.pyc
 
+# Packaged executables
+壁纸转换工具.exe
+
 # macOS
 .DS_Store
 
