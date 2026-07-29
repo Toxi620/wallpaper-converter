@@ -44,7 +44,8 @@ jobs:
             --workpath build \
             convert_wallpaper.py
 
-      - name: 上传构建产物
+      - name: 上传构建产物（仅 tag 时上传，日常 push 跳过以节省存储配额）
+        if: startsWith(github.ref, 'refs/tags/v')
         uses: actions/upload-artifact@v4
         with:
           name: 壁纸转换工具-macOS
