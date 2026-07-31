@@ -32,17 +32,17 @@ pip3 install pyinstaller
 | Section | Lines | Role |
 |---------|-------|------|
 | ffmpeg path resolver | 33-62 | Finds ffmpeg/ffprobe: PyInstaller bundle → script dir → system PATH |
-| Platform config | 67-88 | OPPO/VIVO/荣耀 presets (dir names, bitrate limits, scaling rules) |
-| Core ffmpeg wrappers | 93-219 | `run_cmd`, `get_video_info`(via ffprobe), `encode_mp4`, `make_gif` |
-| Platform processors | 222-286 | `process_oppo`, `process_vivo`, `process_honor` |
-| Orchestration | 289-345 | `process_all` iterates PROCESSORS map; `main` is CLI entry point |
+| Platform config | 68-97 | OPPO/VIVO/荣耀 presets (dir names, bitrate limits, scaling rules) |
+| Core ffmpeg wrappers | 104-290 | `run_cmd`, `get_video_info`(via ffprobe), `encode_mp4`, `make_gif`, `make_gif_constrained` |
+| Platform processors | 292-372 | `process_oppo`, `process_vivo`, `process_honor` |
+| Orchestration | 375-413 | `process_all` iterates PROCESSORS map; `main` is CLI entry point |
 
 ### Processing pipeline
 
 ```
 Input MP4 → get_video_info() → loop over PROCESSORS map
   ├── OPPO:   encode_mp4(1080x1920, maxrate=6M) + make_gif(400px, 15fps)
-  ├── VIVO:   encode_mp4(1080x1920, crf=18)          (no GIF)
+  ├── VIVO:   encode_mp4(1080x1920, crf=18) + make_gif_constrained(216x384, ≥10fps, <1MB)
   └── 荣耀:   scale:1316x2340 → center-crop:1080x2340 → encode_mp4(crf=18)
 ```
 
@@ -52,6 +52,7 @@ Input MP4 → get_video_info() → loop over PROCESSORS map
 - **GIF quality**: Two-stage palette method (`split` → `palettegen` → `paletteuse`), NOT a direct conversion.
 - **荣耀 scaling**: Proportional scale so height=2340 (factor 2340/src_h), then center-crop width to 1080. Formula: `new_w = trunc(src_w * 2340 / src_h / 2) * 2`.
 - **OPPO bitrate**: `-maxrate 6M -bufsize 6M -b:v 6M` ensures ≤6Mbps.
+- **VIVO GIF 约束**: `make_gif_constrained` 尺寸**固定 216x384**（不缩放），帧率下限 10fps、大小 <1MB；超限时先降帧率(15→10)再降调色板色数(256→128→64)，尺寸不变；仍超限则警告并保留当前结果。
 - **Path resolution**: `FFMPEG_PATH, FFPROBE_PATH` globals set once at module load. PyInstaller `sys._MEIPASS` gets priority so bundled binary works offline.
 
 ### Output layout

@@ -80,7 +80,9 @@ PLATFORMS = {
         "gif_width": 216,
         "gif_height": 384,
         "gif_fps": 15,
-        # 保持原尺寸（仅偶数修正），无码率限制
+        "gif_min_fps": 10,       # GIF 帧率下限
+        "gif_max_size_mb": 1,    # GIF 大小上限 (<1MB)
+        # MP4 无码率限制（高质量 crf=18）
     },
     "荣耀": {
         "dir_name": "荣耀",
@@ -230,6 +232,61 @@ def make_gif(
     run_cmd(cmd, f"生成 GIF → {os.path.basename(output_path)}")
 
 
+def make_gif_constrained(
+    input_path: str,
+    output_path: str,
+    width: int,
+    height: int,
+    max_size_bytes: int,
+    min_fps: int = 10,
+    start_fps: int = 15,
+) -> None:
+    """
+    生成满足约束的 GIF（尺寸固定，不缩放）：
+    - 尺寸固定为 width x height（VIVO 要求 216x384）
+    - 帧率不低于 min_fps（VIVO 要求 ≥10 fps）
+    - 文件大小不超过 max_size_bytes（VIVO 要求 <1MB）
+    压缩策略（按优先级）：先降帧率到 min_fps → 降调色板色数，尺寸始终保持不变。
+    每轮生成后检查大小，直到达标或达到最小压缩。
+    """
+    w = ensure_even(width)
+    h = ensure_even(height)
+    fps = start_fps
+    colors = 256
+    max_attempts = 12
+
+    for attempt in range(1, max_attempts + 1):
+        filter_complex = (
+            f"fps={fps},"
+            f"scale={w}:{h}:flags=lanczos,"
+            "split[s0][s1];"
+            f"[s0]palettegen=max_colors={colors}[p];"
+            f"[s1][p]paletteuse=dither=bayer:bayer_scale=3"
+        )
+        cmd = [
+            FFMPEG_PATH, "-y", "-i", input_path,
+            "-vf", filter_complex,
+            "-loop", "0",
+            str(output_path),
+        ]
+        run_cmd(cmd, f"生成 GIF (fps={fps}, {w}x{h}, {colors}色) — 第{attempt}次尝试")
+        size = os.path.getsize(output_path)
+        print(f"  [INFO] GIF 大小: {size/1024:.0f}KB (目标 ≤ {max_size_bytes/1024:.0f}KB)")
+        if size <= max_size_bytes:
+            print(f"  [INFO] GIF 达标 [OK] {w}x{h} @ {fps}fps, {colors}色")
+            return
+
+        # 未达标 → 尺寸不变，仅降帧率到 min_fps，再降调色板色数
+        if fps > min_fps:
+            fps = max(min_fps, fps - 5)
+        elif colors > 64:
+            colors = max(64, colors // 2)
+        else:
+            break
+
+    print(f"  [WARN] 已达最小压缩仍超限 ({size/1024:.0f}KB)，尺寸保持 {w}x{h}，保留当前结果")
+
+
 # ── 平台处理 ──────────────────────────────────────────────────────────
 
 def process_oppo(
@@ -252,16 +309,21 @@ def process_oppo(
 
 
 def process_vivo(input_path: str, info: dict, output_dir: Path, stem: str) -> None:
-    """VIVO：原尺寸重编码（高质量，无码率限制）+ 216x384 GIF。"""
+    """VIVO：原尺寸重编码（高质量，无码率限制）+ 216x384 GIF（帧率≥10fps、大小<1MB）。"""
     w = ensure_even(info["width"])
     h = ensure_even(info["height"])
 
     mp4_out = output_dir / f"{stem}.mp4"
     encode_mp4(input_path, str(mp4_out), w, h, crf=18)
 
-    # 216x384 GIF
+    # 216x384 GIF，约束：帧率≥10fps、文件<1MB（超限自动压缩）
     gif_out = output_dir / f"{stem}.gif"
-    make_gif(input_path, str(gif_out), max_width=216, fps=15, height=384)
+    make_gif_constrained(
+        input_path, str(gif_out),
+        width=216, height=384,
+        max_size_bytes=1 * 1024 * 1024,
+        min_fps=10, start_fps=15,
+    )
 
 
 def process_honor(input_path: str, info: dict, output_dir: Path, stem: str) -> None:
