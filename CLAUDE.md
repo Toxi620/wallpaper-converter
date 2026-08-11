@@ -41,7 +41,7 @@ pip3 install pyinstaller
 
 ```
 Input MP4 → get_video_info() → loop over PROCESSORS map
-  ├── OPPO:   encode_mp4(1080x1920, maxrate=6M) + make_gif(400px, 15fps)
+  ├── OPPO:   encode_mp4(1080x1920, maxrate=6M) + make_gif_constrained(400x710, ≤3MB, 色数≥128, fps[10,15], 帧数[20,30])
   ├── VIVO:   encode_mp4(1080x1920, crf=18) + make_gif_constrained(216x384, ≥10fps, <1MB)
   └── 荣耀:   scale:1316x2340 → center-crop:1080x2340 → encode_mp4(crf=18)
 ```
@@ -53,6 +53,7 @@ Input MP4 → get_video_info() → loop over PROCESSORS map
 - **荣耀 scaling**: Proportional scale so height=2340 (factor 2340/src_h), then center-crop width to 1080. Formula: `new_w = trunc(src_w * 2340 / src_h / 2) * 2`.
 - **OPPO bitrate**: `-maxrate 6M -bufsize 6M -b:v 6M` ensures ≤6Mbps.
 - **VIVO GIF 约束**: `make_gif_constrained` 尺寸**固定 216x384**（不缩放），帧率下限 10fps、大小 <1MB；超限时先降帧率(15→10)再降调色板色数(256→128→64)，尺寸不变；仍超限则警告并保留当前结果。
+- **OPPO GIF 约束**: 同 `make_gif_constrained`，尺寸**固定 400x710**、大小 ≤3MB、色数下限 **128**、帧率 [10,15]、总帧数 [20,30]；帧数上限通过把源视频裁到 `max_frames/start_fps`（30/15=2s）实现，降到 10fps 时帧数同步减为 20，仍落在 [20,30]。
 - **Path resolution**: `FFMPEG_PATH, FFPROBE_PATH` globals set once at module load. PyInstaller `sys._MEIPASS` gets priority so bundled binary works offline.
 
 ### Output layout

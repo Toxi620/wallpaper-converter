@@ -70,9 +70,7 @@ PLATFORMS = {
         "dir_name": "OPPO",
         "generate_gif": True,
         "max_bitrate": "6M",  # ≤ 6 Mbps
-        "gif_max_width": 400,
-        "gif_fps": 15,
-        # 保持原尺寸（仅偶数修正）
+        # GIF 规格：固定 400x710、大小≤3MB、色数≥128、帧率[10,15]、总帧数[20,30]
     },
     "VIVO": {
         "dir_name": "vivo",
@@ -197,41 +195,6 @@ def encode_mp4(
     run_cmd(cmd, f"编码 MP4 → {os.path.basename(output_path)}")
 
 
-def make_gif(
-    input_path: str,
-    output_path: str,
-    max_width: int = 400,
-    fps: int = 15,
-    height: int | None = None,
-) -> None:
-    """
-    两阶段 palette 法生成高质量 GIF。
-    - 帧率降至 ~15 fps
-    - 默认宽度限制 max_width，高度等比缩放
-    - 若指定 height，则强制输出 exact 尺寸 (max_width x height)
-    - lanczos 下采样 + 256 色调色板
-    """
-    if height is not None:
-        scale_expr = f"{max_width}:{height}"
-    else:
-        scale_expr = f"'min({max_width},iw)':-1"
-
-    filter_complex = (
-        f"fps={fps},"
-        f"scale={scale_expr}:flags=lanczos,"
-        "split[s0][s1];"
-        "[s0]palettegen=max_colors=256[p];"
-        "[s1][p]paletteuse=dither=bayer:bayer_scale=3"
-    )
-    cmd = [
-        FFMPEG_PATH, "-y", "-i", input_path,
-        "-vf", filter_complex,
-        "-loop", "0",
-        str(output_path),
-    ]
-    run_cmd(cmd, f"生成 GIF → {os.path.basename(output_path)}")
-
-
 def make_gif_constrained(
     input_path: str,
     output_path: str,
@@ -240,20 +203,27 @@ def make_gif_constrained(
     max_size_bytes: int,
     min_fps: int = 10,
     start_fps: int = 15,
+    min_colors: int = 64,
+    max_frames: int | None = None,
 ) -> None:
     """
     生成满足约束的 GIF（尺寸固定，不缩放）：
-    - 尺寸固定为 width x height（VIVO 要求 216x384）
-    - 帧率不低于 min_fps（VIVO 要求 ≥10 fps）
-    - 文件大小不超过 max_size_bytes（VIVO 要求 <1MB）
-    压缩策略（按优先级）：先降帧率到 min_fps → 降调色板色数，尺寸始终保持不变。
-    每轮生成后检查大小，直到达标或达到最小压缩。
+    - 尺寸固定为 width x height（VIVO 要求 216x384 / OPPO 要求 400x710）
+    - 帧率不低于 min_fps（VIVO/OPPO 要求 ≥10 fps）
+    - 色数不低于 min_colors（VIVO 默认 64 / OPPO 要求 ≥128）
+    - 总帧数不超过 max_frames（OPPO 要求 [20,30]）：把源视频裁到
+      max_frames/start_fps 秒（如 30/15 = 2s），降到 min_fps 时帧数同步变少
+      （10fps*2s = 20 帧），仍落在 [20,30]，且压缩依然有效
+    - 文件大小不超过 max_size_bytes（VIVO 要求 <1MB / OPPO 要求 ≤3MB）
+    压缩策略（按优先级）：先降帧率到 min_fps → 降调色板色数（不低于 min_colors），
+    尺寸始终不变。每轮生成后检查大小，直到达标或达到最小压缩。
     """
     w = ensure_even(width)
     h = ensure_even(height)
     fps = start_fps
     colors = 256
     max_attempts = 12
+    trim_duration = f"{max_frames / start_fps:.3f}" if max_frames else None
 
     for attempt in range(1, max_attempts + 1):
         filter_complex = (
@@ -267,8 +237,10 @@ def make_gif_constrained(
             FFMPEG_PATH, "-y", "-i", input_path,
             "-vf", filter_complex,
             "-loop", "0",
-            str(output_path),
         ]
+        if trim_duration:
+            cmd += ["-t", trim_duration]
+        cmd.append(str(output_path))
         run_cmd(cmd, f"生成 GIF (fps={fps}, {w}x{h}, {colors}色) — 第{attempt}次尝试")
         size = os.path.getsize(output_path)
         print(f"  [INFO] GIF 大小: {size/1024:.0f}KB (目标 ≤ {max_size_bytes/1024:.0f}KB)")
@@ -276,11 +248,11 @@ def make_gif_constrained(
             print(f"  [INFO] GIF 达标 [OK] {w}x{h} @ {fps}fps, {colors}色")
             return
 
-        # 未达标 → 尺寸不变，仅降帧率到 min_fps，再降调色板色数
+        # 未达标 → 尺寸不变，仅降帧率到 min_fps，再降调色板色数（不低于 min_colors）
         if fps > min_fps:
             fps = max(min_fps, fps - 5)
-        elif colors > 64:
-            colors = max(64, colors // 2)
+        elif colors > min_colors:
+            colors = max(min_colors, colors // 2)
         else:
             break
 
@@ -295,7 +267,7 @@ def process_oppo(
     output_dir: Path,
     stem: str,
 ) -> None:
-    """OPPO：原尺寸重编码（≤ 6 Mbps）+ GIF。"""
+    """OPPO：原尺寸重编码（≤ 6 Mbps）+ 400x710 GIF（≤3MB、色数≥128、fps[10,15]、帧数[20,30]）。"""
     w = ensure_even(info["width"])
     h = ensure_even(info["height"])
 
@@ -303,9 +275,16 @@ def process_oppo(
     mp4_out = output_dir / f"{stem}.mp4"
     encode_mp4(input_path, str(mp4_out), w, h, maxrate="6M")
 
-    # GIF
+    # GIF：固定 400x710，约束：大小≤3MB、色数≥128、帧率[10,15]、总帧数[20,30]（超限自动压缩）
     gif_out = output_dir / f"{stem}.gif"
-    make_gif(input_path, str(gif_out), max_width=400, fps=15)
+    make_gif_constrained(
+        input_path, str(gif_out),
+        width=400, height=710,
+        max_size_bytes=3 * 1024 * 1024,
+        min_fps=10, start_fps=15,
+        min_colors=128,
+        max_frames=30,
+    )
 
 
 def process_vivo(input_path: str, info: dict, output_dir: Path, stem: str) -> None:
