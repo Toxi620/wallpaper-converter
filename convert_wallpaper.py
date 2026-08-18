@@ -91,6 +91,17 @@ PLATFORMS = {
     },
 }
 
+# ── GIF 色彩保真（256 色量化 vs 原片色彩）──────────────────────────────
+# 抖动：OPPO 用 sierra2_4a（平滑、SSIM 最接近源片）；VIVO 因 <1MB 硬约束
+# 只能用 bayer（sierra 误差扩散难压缩、会超限）。
+# eq 补偿作用于调色板路径 [s0]（输出帧 [s1] 保持原色），强度按平台传入：
+#   OPPO+sierra 扫出最优强度 OPPO_GIF_SAT_BOOST=1.08：色数降到 128 时近白区
+#   （luma≥200）细微色调像素会从源片 35.6% 掉到 30%（淡色调被抹成纯白，整体
+#   显得"发白偏灰"）；eq=1.08 可恢复到 34.8%，全局饱和度仅 101.3%、MAE 2.76、
+#   SSIM 仍 0.982。eq=1.0 虽饱和度最贴(97.1%)但保留不了淡色调；eq=1.3 过冲
+#   (103.5%) 又明显偏离原片。VIVO 用 bayer+eq=1.3:1.04，用户确认观感 OK。
+OPPO_GIF_SAT_BOOST = 1.08    # OPPO 近白区色调的温和补偿（详见上方注释）
+
 
 # ── 工具函数 ──────────────────────────────────────────────────────────
 
@@ -205,6 +216,9 @@ def make_gif_constrained(
     start_fps: int = 15,
     min_colors: int = 64,
     max_frames: int | None = None,
+    dither: str = "bayer:bayer_scale=2",
+    sat_boost: float = 1.0,
+    contrast_boost: float = 1.0,
 ) -> None:
     """
     生成满足约束的 GIF（尺寸固定，不缩放）：
@@ -217,6 +231,9 @@ def make_gif_constrained(
     - 文件大小不超过 max_size_bytes（VIVO 要求 <1MB / OPPO 要求 ≤3MB）
     压缩策略（按优先级）：先降帧率到 min_fps → 降调色板色数（不低于 min_colors），
     尺寸始终不变。每轮生成后检查大小，直到达标或达到最小压缩。
+    色彩保真：eq 只加在调色板路径 [s0]（sat_boost/contrast_boost，默认 1.0 即不补偿），
+    输出帧 [s1] 保持原色；抖动用 dither 参数
+    （OPPO=sierra2_4a 平滑、无需 eq；VIVO=bayer + eq=1.3:1.04 因 <1MB 硬约束）。
     """
     w = ensure_even(width)
     h = ensure_even(height)
@@ -226,12 +243,16 @@ def make_gif_constrained(
     trim_duration = f"{max_frames / start_fps:.3f}" if max_frames else None
 
     for attempt in range(1, max_attempts + 1):
+        # 仅当需要 eq 补偿时才插入该滤镜，避免无谓的像素处理
+        s0_eq = ""
+        if sat_boost != 1.0 or contrast_boost != 1.0:
+            s0_eq = f"eq=saturation={sat_boost}:contrast={contrast_boost},"
         filter_complex = (
             f"fps={fps},"
             f"scale={w}:{h}:flags=lanczos,"
             "split[s0][s1];"
-            f"[s0]palettegen=max_colors={colors}[p];"
-            f"[s1][p]paletteuse=dither=bayer:bayer_scale=3"
+            f"[s0]{s0_eq}palettegen=max_colors={colors}[p];"
+            f"[s1][p]paletteuse=dither={dither}"
         )
         cmd = [
             FFMPEG_PATH, "-y", "-i", input_path,
@@ -284,6 +305,8 @@ def process_oppo(
         min_fps=10, start_fps=15,
         min_colors=128,
         max_frames=30,
+        dither="sierra2_4a",  # OPPO 有 3MB 余量，用更平滑、更贴源片的抖动
+        sat_boost=OPPO_GIF_SAT_BOOST,  # 温和补偿，补回近白区被抹掉的淡色调
     )
 
 
@@ -302,6 +325,8 @@ def process_vivo(input_path: str, info: dict, output_dir: Path, stem: str) -> No
         width=216, height=384,
         max_size_bytes=1 * 1024 * 1024,
         min_fps=10, start_fps=15,
+        dither="bayer:bayer_scale=2",
+        sat_boost=1.3, contrast_boost=1.04,  # bayer 小尺寸需 eq 补偿（用户确认 OK）
     )
 
 
